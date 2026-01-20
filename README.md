@@ -1,1 +1,19 @@
 # INF2009 Edge Computing Project
+
+## Setup
+1. Create virtual environment.
+```zsh
+python3 -m venv .venv
+```
+2. Activate virtual environment.
+```zsh
+source .venv/bin/activate
+```
+3. Install dependencies.
+```zsh
+pip install -r requirements.txt
+```
+4. Run the app.
+```zsh
+python3 src/main.py
+```
