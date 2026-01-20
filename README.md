@@ -1,1 +1,1 @@
-# INF2009_Edge_Computing_Project
+# INF2009 Edge Computing Project
