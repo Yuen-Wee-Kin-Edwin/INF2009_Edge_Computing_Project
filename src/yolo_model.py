@@ -8,14 +8,15 @@ import cv2
 class Detector:
     def __init__(self):
         os.makedirs("models", exist_ok=True)
-        # Load a YOLO26n PyTorch model
-        self.model = YOLO("models/yolo26n.pt")
+        # Load a YOLO26m PyTorch model
+        # For the lower end used "yolo26n.pt"
+        self.model = YOLO("models/yolo26m.pt")
 
     def get_model(self) -> YOLO:
         return self.model
 
 
-# # --- Download a sample image ---
+# # # --- Download a sample image ---
 # os.makedirs("test_images", exist_ok=True)
 # sample_image_path = "test_images/sample.jpg"
 
