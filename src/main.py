@@ -1,3 +1,4 @@
+# File: src/main.py
 import threading
 import time
 
@@ -6,6 +7,8 @@ def monitoring_loop():
     while True:
         time.sleep(0.1)
 
+
+# Raspberry Pi 5 Model B Rev 1.1
 
 if __name__ == "__main__":
     # Run monitoring in a background thread.
