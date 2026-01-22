@@ -17,3 +17,8 @@ pip install -r requirements.txt
 ```zsh
 python3 src/main.py
 ```
+
+## MQTT Hub Setup.
+```zsh
+sudo ./scripts/setup_mqtt_hub.sh
+```
