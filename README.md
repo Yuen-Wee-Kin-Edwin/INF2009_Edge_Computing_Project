@@ -15,7 +15,7 @@ pip install -r requirements.txt
 ```
 4. Run the app.
 ```zsh
-python3 src/main.py
+./scripts/run_app.sh
 ```
 
 ## MQTT Hub Setup.

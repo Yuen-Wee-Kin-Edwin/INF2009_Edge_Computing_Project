@@ -1,0 +1,50 @@
+<!-- File: src/templates/dashboard.html -->
+{% extends "base.html" %}
+
+{% block title %}
+Dashboard - Laboratory Monitoring System
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+    <h2>System Overview</h2>
+    <p>
+        This dashboard monitors restricted laboratory areas using edge-based
+        computer vision, mmWave motion sensing, and MQTT messaging.
+    </p>
+</div>
+
+<div class="card">
+    <h2>Live Camera Feed</h2>
+    <p>Camera stream will appear here.</p>
+    <!-- Placeholder for future live image -->
+    <img src="/image" alt="Live Feed" style="max-width: 100%; border: 1px solid #cccccc;">
+</div>
+
+<div class="card">
+    <h2>Detection Status</h2>
+    <p>
+        Human Detected:
+        <span class="status-bad">Unknown</span>
+    </p>
+    <p>
+        Confidence:
+        <strong>--</strong>
+    </p>
+    <p>
+        Last Update:
+        <strong>--</strong>
+    </p>
+</div>
+
+<div class="card">
+    <h2>System Health</h2>
+    <ul>
+        <li>MQTT: Unknown</li>
+        <li>Camera: Unknown</li>
+        <li>mmWave Sensor: Unknown</li>
+    </ul>
+</div>
+
+{% endblock %}

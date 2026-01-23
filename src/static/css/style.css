@@ -1,0 +1,52 @@
+   body {
+       font-family: Arial, Helvetica, sans-serif;
+       margin: 0;
+       background-color: #f4f6f8;
+   }
+
+   header {
+       background-color: #1f2933;
+       color: #ffffff;
+       padding: 16px;
+   }
+
+   nav a {
+       color: #ffffff;
+       margin-right: 16px;
+       text-decoration: none;
+       font-weight: bold;
+   }
+
+   nav a:hover {
+       text-decoration: underline;
+   }
+
+   main {
+       padding: 20px;
+   }
+
+   footer {
+       background-color: #e5e7eb;
+       text-align: centre;
+       padding: 10px;
+       font-size: 0.9em;
+       color: #555555;
+   }
+
+   .card {
+       background-color: #ffffff;
+       padding: 16px;
+       margin-bottom: 16px;
+       border-radius: 6px;
+       box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+   }
+
+   .status-ok {
+       color: green;
+       font-weight: bold;
+   }
+
+   .status-bad {
+       color: red;
+       font-weight: bold;
+   }
