@@ -11,11 +11,14 @@ source .venv/bin/activate
 ```
 3. Install dependencies.
 ```zsh
+sudo ./scripts/install_dependencies.sh
+```
+```zsh
 pip install -r requirements.txt
 ```
 4. Run the app.
 ```zsh
-./scripts/run_app.sh
+sudo ./scripts/run_app.sh
 ```
 
 ## MQTT Hub Setup.

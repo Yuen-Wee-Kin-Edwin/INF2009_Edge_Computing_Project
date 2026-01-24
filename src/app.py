@@ -1,6 +1,9 @@
 # File: src/app.py
-from flask import Flask, jsonify, render_template, redirect, url_for
+from flask import Flask, Response, jsonify, render_template, redirect, url_for
 import time
+
+from entities.camera import Camera
+from entities.camera_manager import CameraManager
 
 # Create the Flask application instance.
 app = Flask(__name__)
@@ -28,6 +31,23 @@ LATEST_DETECTION = {
 
 EVENT_LOGS = []  # Will later be persisted to disk or database.
 
+# Initialize camera (edge simulation)
+# camera = Camera()
+cm = CameraManager()
+cm.add_camera("cam1", source="/dev/video0")  # Use local webcam as "cam1"
+
+
+# def generate_frames():
+#     """Flask generator to stream MJPEG frames."""
+#     while True:
+#         frame_bytes = camera.get_frame_bytes()
+#         if frame_bytes is None:
+#             continue
+#         yield (
+#             b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+#         )
+
+
 # -------------------------
 # Routes
 # -------------------------
@@ -47,6 +67,20 @@ def dashboard():
     Dashboard landing page.
     """
     return render_template("dashboard.html")
+
+
+@app.route("/video_feed/<camera_id>")
+def video_feed(camera_id):
+    """Stream frames for a specific camera."""
+
+    def generate():
+        while True:
+            frame_bytes = cm.get_frame(camera_id=camera_id)
+            if frame_bytes is None:
+                continue
+            yield b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+
+    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
 @app.route("/api/health", methods=["GET"])
