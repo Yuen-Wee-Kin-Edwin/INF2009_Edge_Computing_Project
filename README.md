@@ -16,9 +16,13 @@ sudo ./scripts/install_dependencies.sh
 ```zsh
 pip install -r requirements.txt
 ```
-4. Run the app.
+4. Run the app
 ```zsh
 sudo ./scripts/run_app.sh
+```
+5. OPTIONAL: Run sqlite-web
+```zsh
+sqlite_web src/lab_monitor.db --host 0.0.0.0 --port 8080
 ```
 
 ## MQTT Hub Setup.

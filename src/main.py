@@ -3,6 +3,7 @@ import threading
 import time
 
 from app import run_flask
+from db import Database
 
 
 def monitoring_loop():
@@ -21,6 +22,11 @@ def monitoring_loop():
 # Raspberry Pi 5 Model B Rev 1.1
 
 if __name__ == "__main__":
+    # Initialised db.
+    db = Database()
+    db.init_db()
+    print(f"Database initialized at {db.db_path}")
+
     # Run monitoring in a background thread.
     monitoring_thread = threading.Thread(target=monitoring_loop, daemon=True)
     monitoring_thread.start()

@@ -15,4 +15,7 @@ sudo apt install -y libopenblas-dev liblapack-dev
 echo "Installing Python headers..."
 sudo apt install -y python3-dev
 
+echo "Installing SQLite..."
+sudo apt install -y sqlite3
+
 echo "All dependencies installed successfully!"

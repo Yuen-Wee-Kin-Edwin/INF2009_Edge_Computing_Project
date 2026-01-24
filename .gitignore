@@ -209,3 +209,5 @@ __marimo__/
 models/
 outputs/
 test_images/
+
+src/lab_monitor.db
