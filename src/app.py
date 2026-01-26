@@ -1,9 +1,17 @@
 # File: src/app.py
 from flask import Flask, Response, jsonify, render_template, redirect, url_for
 import time
+import cv2
+import threading
 
 from entities.camera import Camera
 from entities.camera_manager import CameraManager
+from yolo_model import Detector
+
+# -------------------------
+# Initialize YOLO Detector
+# -------------------------
+detector = Detector()
 
 # Create the Flask application instance.
 app = Flask(__name__)
@@ -69,16 +77,54 @@ def dashboard():
     return render_template("dashboard.html")
 
 
+# Global variables for latest annotated frame.
+latest_frame = None
+
+
+def detection_loop(camera_id):
+    """
+    Continuously fetch frames from camera, run YOLO detection, and
+    store the latest annotated frame for streaming.
+    """
+    global latest_frame
+    while True:
+        frame_bytes = cm.get_frame(camera_id)
+        if frame_bytes is None:
+            continue
+
+        # Run YOLO detection and annotate frame.
+        _, annotated_frame = detector.detect_frame(frame_bytes)
+        if annotated_frame is not None:
+            latest_frame = annotated_frame
+
+
+# Start the detection thread.
+threading.Thread(target=detection_loop, args=("cam1",), daemon=True).start()
+
+STREAM_FPS = 15  # target FPS
+
+
 @app.route("/video_feed/<camera_id>")
 def video_feed(camera_id):
-    """Stream frames for a specific camera."""
+    """
+    Stream the latest YOLO-annotated frame at a stable rate.
+    """
 
     def generate():
+        global latest_frame
         while True:
-            frame_bytes = cm.get_frame(camera_id=camera_id)
-            if frame_bytes is None:
+            if latest_frame is None:
+                continue  # Wait until first annoated frame is ready.
+
+            # Encode frame to JPEG.
+            ret, buffer = cv2.imencode(".jpg", latest_frame)
+            if not ret:
                 continue
-            yield b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+
+            # Stream as MJPEG
+            yield b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+
+            time.sleep(1 / STREAM_FPS)  # Pace streaming to ~15 FPS.
 
     return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
