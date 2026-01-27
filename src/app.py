@@ -1,4 +1,5 @@
 # File: src/app.py
+import os
 from flask import Flask, Response, jsonify, render_template, redirect, url_for
 import time
 import cv2
@@ -93,9 +94,13 @@ def detection_loop(camera_id):
             continue
 
         # Run YOLO detection and annotate frame.
-        _, annotated_frame = detector.detect_frame(frame_bytes)
+        _, annotated_frame, face_results = detector.detect_frame(frame_bytes)
+
         if annotated_frame is not None:
             latest_frame = annotated_frame
+
+        if face_results:
+            print("[INFO] Face results:", face_results)
 
 
 # Start the detection thread.
@@ -127,6 +132,40 @@ def video_feed(camera_id):
             time.sleep(1 / STREAM_FPS)  # Pace streaming to ~15 FPS.
 
     return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+# Directory to save known faces
+KNOWN_FACES_DIR = os.path.join(os.path.dirname(__file__), "known_faces")
+os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
+
+
+@app.route("/api/capture_face/<name>", methods=["POST"])
+def capture_face(name):
+    """
+    Capture the current frame from the camera and save it as a known face.
+    The user provides 'name' in the URL.
+    """
+    global latest_frame
+
+    if latest_frame is None:
+        return jsonify({"status": "error", "message": "No frame available yet."}), 400
+
+    # Optional: convert name to lowercase.
+    name = name.strip().lower()
+    if not name:
+        return jsonify({"status": "error", "message": "Name cannot be empty."}), 400
+
+    # Save full frame (or crop face later)
+    filename = f"{name}.jpg"
+    path = os.path.join(KNOWN_FACES_DIR, filename)
+    cv2.imwrite(path, latest_frame)
+
+    return jsonify(
+        {
+            "status": "ok",
+            "message": f"Face saved as {filename}. Restart app to activate.",
+        }
+    )
 
 
 @app.route("/api/health", methods=["GET"])
