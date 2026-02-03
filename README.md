@@ -29,3 +29,9 @@ sqlite_web src/lab_monitor.db --host 0.0.0.0 --port 8080
 ```zsh
 sudo ./scripts/setup_mqtt_hub.sh
 ```
+
+## Edge Pi
+```
+cd edge_pi/scripts
+python3 capture_publish.py
+```
