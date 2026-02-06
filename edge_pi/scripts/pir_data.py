@@ -5,7 +5,7 @@ import paho.mqtt.client as mqtt
 from datetime import datetime
 
 # MQTT Broker
-BROKER_IP = "192.168.1.16"
+BROKER_IP = "<<MAIN_PI_IP>>"
 BROKER_PORT = 1883
 WAKE_PI_TOPIC = "system/wake_pi"
 
