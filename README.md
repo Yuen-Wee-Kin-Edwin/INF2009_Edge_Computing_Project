@@ -32,6 +32,13 @@ sudo ./scripts/setup_mqtt_hub.sh
 
 ## Edge Pi
 ```
+sudo apt update
+sudo apt install python3-pip
+sudo apt install python3-opencv
+
+# Install pip packages
+pip install -r requirements-edge.txt
+
 cd edge_pi/scripts
 python3 capture_publish.py
 ```
