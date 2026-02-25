@@ -6,10 +6,9 @@ import paho.mqtt.client as mqtt
 from datetime import datetime
 
 # ---------------- MQTT CONFIG ----------------
-BROKER_IP = "<MAIN_PI_IP>6"
+BROKER_IP = "<MAIN_PI_IP>" # Replace with main Pi's IP
 BROKER_PORT = 1883
 WAKE_COMMAND_TOPIC = "system/wake_pi"
-WAKE_ACK_TOPIC = "system/wake_ack"
 
 # ---------------- SNAPSHOT CONFIG ----------------
 SNAPSHOT_DIR = os.path.join(os.path.dirname(__file__), '..', 'snapshot')
@@ -18,6 +17,9 @@ CAPTURE_INTERVAL = 2                  # Seconds between snapshots
 
 # Ensure snapshot directory exists
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+
+# ---------------- GLOBAL STATE ----------------
+capture_active = False  # Flag to control continuous capture
 
 # ---------------- MQTT CALLBACKS ----------------
 def on_connect(client, userdata, flags, rc, properties=None):
@@ -28,42 +30,36 @@ def on_connect(client, userdata, flags, rc, properties=None):
         print(f"❌ MQTT connection failed with code {rc}")
 
 def on_message(client, userdata, msg):
+    global capture_active
+
     data = json.loads(msg.payload.decode())
 
-    if data.get("command") == "wake":
-        pi_id = data.get("target_pi", "")
-        if pi_id == "webcam1_pi" or pi_id == "all":
-            reason = data.get("reason", "unknown")
-            print(f"🚀 Waking up Pi Zero 2W - Reason: {reason}")
+    command = data.get("command")
+    reason = data.get("reason", "unknown")
 
-            # Start continuous snapshot
-            continuous_capture()
+    if command == "wake":
+        print(f"🚀 Waking up Pi Zero 2W - Reason: {reason}")
+        if not capture_active:
+            threading.Thread(target=continuous_capture, daemon=True).start()
 
-            # Log the wake event
-            with open("/tmp/wake_log.txt", "a") as f:
-                f.write(f"{time.ctime()}: Woken up by {data.get('source', 'unknown')} for continuous capture\n")
-
-            # Send acknowledgement
-            ack_payload = {
-                "pi_id": "webcam1_pi",
-                "status": "awake",
-                "timestamp": time.ctime(),
-                "reason": reason
-            }
-            client.publish(WAKE_ACK_TOPIC, json.dumps(ack_payload))
-            print("📤 Wake acknowledgement sent")
+    elif command == "sleep":
+        print(f"💤 Sleep command received - Reason: {reason}")
+        capture_active = False  # Stop continuous capture
 
 # ---------------- CONTINUOUS CAPTURE FUNCTION ----------------
 def continuous_capture():
+    global capture_active
+    capture_active = True
     print("📸 Starting continuous capture. Press Ctrl+C to stop.")
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("❌ Camera failed to open")
+        capture_active = False
         return
 
     try:
-        while True:
+        while capture_active:
             ret, frame = cap.read()
             if ret:
                 # Timestamped filename
@@ -91,9 +87,12 @@ def continuous_capture():
         print("\n🛑 Continuous capture stopped by user")
     finally:
         cap.release()
+        capture_active = False
 
 # ---------------- MAIN ----------------
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, "PiZero_Wake_Receiver")
+import threading
+
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 client.on_connect = on_connect
 client.on_message = on_message
 
@@ -107,6 +106,6 @@ try:
         time.sleep(1)
 except KeyboardInterrupt:
     print("\n🛑 Shutting down MQTT client")
+    capture_active = False  # Stop capture if running
     client.loop_stop()
     client.disconnect()
-
