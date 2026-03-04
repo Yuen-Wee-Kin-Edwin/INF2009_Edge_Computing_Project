@@ -36,6 +36,13 @@ sudo apt update
 sudo apt install python3-pip
 sudo apt install python3-opencv
 
+# Download the quantized MobileNet V2 SSD model
+wget https://github.com/google-coral/test_data/raw/master/ssd_mobilenet_v2_coco_quant_postprocess.tflite
+
+# Download the corresponding COCO label map
+wget https://github.com/google-coral/test_data/raw/master/coco_labels.txt
+
+
 # Install pip packages
 mkdir -p ~/tmp
 export TMPDIR=~/tmp
