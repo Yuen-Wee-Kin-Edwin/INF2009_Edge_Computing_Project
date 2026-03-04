@@ -37,7 +37,9 @@ sudo apt install python3-pip
 sudo apt install python3-opencv
 
 # Install pip packages
-pip install -r requirements-edge.txt
+mkdir -p ~/tmp
+export TMPDIR=~/tmp
+pip install --no-cache-dir -r requirements-edge.txt
 
 cd edge_pi/scripts
 python3 capture_publish.py
