@@ -4,6 +4,7 @@ import base64
 import paho.mqtt.client as mqtt
 import time
 import os
+import socket
 import json
 from datetime import datetime
 import numpy as np
@@ -38,6 +39,43 @@ MQTT_BROKER = "192.168.137.98"
 MQTT_PORT = 1883
 MQTT_USER = "edwin"
 MQTT_PASS = "password"
+
+# Connection Callbacks
+def on_connect(client, userdata, flags, reason_code, properties):
+    """Callback triggered when the edge connects to the hub."""
+    if reason_code == 0:
+        print(f"Edge successfully connected to the hub at {MQTT_BROKER}")
+    else:
+        print(f"Connection to hub failed with return code {reason_code}")
+
+def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
+    """Callback triggered on unexpected disconnections."""
+    print("Warning: Unexpected disconnection from hub. Reconnecting...")
+
+# ------------------------------
+# Initialise Connection
+# ------------------------------
+# Instantiate the client
+mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+
+# Set authentication credentials
+mqtt_client.username_pw_set(MQTT_USER, MQTT_PASS)
+
+# Bind the callbacks to the client
+mqtt_client.on_connect = on_connect
+mqtt_client.on_disconnect = on_disconnect
+
+print(f"Attempting to connect to MQTT hub at {MQTT_BROKER}...")
+try:
+    mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+
+    # loop_start() spawns a daemon thread.
+    # It manages ping requests, network traffic, and automatic reconnections in the background
+    mqtt_client.loop_start()
+
+except Exception as e:
+    print(f"Critical error: Could not establish initial connection to the hub. {e}")
+    exit(1)
 
 # ------------------------------
 # Initialise Environment
@@ -116,12 +154,14 @@ try:
         # 5. Handle Detections
         if person_detected:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"cam1_snapshot_{timestamp}.jpg"
+            filename = f"{CLIENT_ID}_snapshot_{timestamp}.jpg"
             filepath = os.path.join(SNAPSHOT_DIR, filename)
 
+            # Save to disk locally
             cv2.imwrite(filepath, roi, [cv2.IMWRITE_JPEG_QUALITY, 95])
             print(f"Snapshot saved as {filepath}")
 
+            # Manage local snapshot retention
             snapshots = sorted(
                 [f for f in os.listdir(SNAPSHOT_DIR) if f.endswith(".jpg")],
                 key=lambda x: os.path.getmtime(os.path.join(SNAPSHOT_DIR, x))
@@ -131,6 +171,30 @@ try:
                 oldest = snapshots.pop(0)
                 os.remove(os.path.join(SNAPSHOT_DIR, oldest))
                 print(f"Deleted oldest snapshot: {oldest}")
+
+            # 6. Construct and Publish MQTT Payload.
+            # Encode image matrix directly to a JPEG buffer in memory.
+            success, buffer = cv2.imencode('.jpg', roi, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+
+            if success:
+                # Convert the binary buffer to a base64 string.
+                b64_string = base64.b64encode(buffer).decode('utf-8')
+
+                # Construct a structured JSON payload with relevant metadata.
+                payload = {
+                        "camera_id": CLIENT_ID,
+                        "location": LOCATION,
+                        "lab_id": LAB_ID,
+                        "timestamp": timestamp,
+                        "confidence": float(confidence_pct),
+                        "image": b64_string
+                }
+
+                # Serialise the dictionary to a JSON string and publish
+                mqtt_client.publish(MQTT_TOPIC, json.dumps(payload), qos=1)
+                print(f"Published detection payload to {MQTT_TOPIC}")
+            else:
+                print("Error: Failed to encode image to memory buffer.")
         else:
             print(f"[{datetime.now()}] Clear. No person detected.")
 
@@ -141,3 +205,6 @@ except KeyboardInterrupt:
 
 finally:
     cap.release()
+    # Stop the background network thread and sever the connection cleanly.
+    mqtt_client.loop_stop()
+    mqtt_client.disconnect()
