@@ -28,6 +28,8 @@ sqlite_web src/lab_monitor.db --host 0.0.0.0 --port 8080
 ## MQTT Hub Setup.
 ```zsh
 sudo ./scripts/setup_mqtt_hub.sh
+username -> edwin
+password -> password
 ```
 
 ## Edge Pi
