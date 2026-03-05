@@ -4,22 +4,40 @@ import base64
 import paho.mqtt.client as mqtt
 import time
 import os
+import json
 from datetime import datetime
 import numpy as np
 import ai_edge_litert.interpreter as tflite
 
 # Load MobileNet
 MODEL_PATH = "ssd_mobilenet_v2_coco_quant_postprocess.tflite"
-PERSON_CLASS_INDEX = 15 # ImageNet 'person'
-
 # In the standard COCO dataset, 'person' is class 0
 PERSON_CLASS_INDEX = 0 
 MIN_CONFIDENCE = 0.60  # Require 60% confidence to trigger a save
 
+# Camera & Capture
 MAX_SNAPSHOTS = 5
 CAMERA_INDEX = 0
 ROI_COORDS = (0, 720, 0, 1280) # y1, y2, x1, x2
 CAPTURE_INTERVAL = 5
+
+# Dynamically acquire the device hostname (e.g., 'edge-camera-01')
+CLIENT_ID = socket.gethostname()
+
+# Define the location/lab. Ideally, load this from an envrionment variable
+# to keep the script entirely generic across all devices.
+LOCATION = "sit"
+LAB_ID = os.environ.get("LAB_ID", "lab_default")
+
+# Construct the scalable, strictly formatted MQTT topic.
+# Example output: sit/lab_default/edge-camera-01/vision/person
+MQTT_TOPIC = f"{LOCATION}/{LAB_ID}/{CLIENT_ID}/vision/person"
+
+# MQTT Settings
+MQTT_BROKER = "192.168.137.98"
+MQTT_PORT = 1883
+MQTT_USER = "edwin"
+MQTT_PASS = "password"
 
 # ------------------------------
 # Initialise Environment
@@ -123,4 +141,3 @@ except KeyboardInterrupt:
 
 finally:
     cap.release()
-    cv2.destroyAllWindows()

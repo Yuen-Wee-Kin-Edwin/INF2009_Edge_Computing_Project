@@ -51,5 +51,5 @@ export TMPDIR=~/tmp
 pip install --no-cache-dir -r requirements-edge.txt
 
 cd edge_pi/scripts
-python3 capture_publish.py
+LAB_ID=lab01 python3 capture_publish.py
 ```
