@@ -213,3 +213,4 @@ test_images/
 src/lab_monitor.db
 
 edge_pi/snapshot/
+src/non_compliance/
