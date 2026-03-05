@@ -20,24 +20,23 @@ class Detector:
     def get_model(self) -> YOLO:
         return self.model
 
-    def detect_frame(self, frame_bytes: bytes, annotate: bool = True):
+    def detect_frame(self, frame: np.ndarray, annotate: bool = True):
         """
-        Run YOLO detection on a single camera frame.
+        Run YOLO detection on a single camera frame matrix.
 
         Args:
-            frame_bytes (bytes): JPEG-encoded frame from camera.
+            frame (np.ndarray): OpenCV image matrix.
             annotate (bool): Whether to return an annotated frame with bounding boxes.
 
         Returns:
             results (ultralytics.engine.results.Results): YOLO detection results object.
             annotated_frame (np.ndarray | None): OpenCV frame with bounding boxes (if annotate=True).
-            face_results
+            face_results (list): List of recognised faces and coordinates.
         """
-        # Convert JPEG bytes to OpenCV image
-        np_arr = np.frombuffer(frame_bytes, np.uint8)
-        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-        if frame is None:
-            return None, None
+        # Validate the incoming matrix
+        if frame is None or not isinstance(frame, np.ndarray):
+            print("[YOLO] Error: Invalid frame matrix passed to detector.")
+            return None, None, None
 
         # Resize to smaller resolution for faster inference.
         frame_small = cv2.resize(frame, (640, 360))
