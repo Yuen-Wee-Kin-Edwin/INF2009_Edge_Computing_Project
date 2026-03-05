@@ -1,5 +1,9 @@
 # File: src/app.py
 import os
+import json
+import base64
+import numpy as np
+import paho.mqtt.client as mqtt
 from flask import Flask, Response, jsonify, render_template, redirect, url_for
 import time
 import cv2
@@ -8,6 +12,17 @@ import threading
 from entities.camera import Camera
 from entities.camera_manager import CameraManager
 from yolo_model import Detector
+
+# -------------------------
+# Directory Configuration
+# -------------------------
+# Define and create the non-compliance evidence directory
+NON_COMPLIANCE_DIR = os.path.join(os.path.dirname(__file__), "non_compliance")
+os.makedirs(NON_COMPLIANCE_DIR, exist_ok=True)
+
+# Directory to save known faces
+KNOWN_FACES_DIR = os.path.join(os.path.dirname(__file__), "known_faces")
+os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
 
 # -------------------------
 # Initialize YOLO Detector
@@ -40,43 +55,99 @@ LATEST_DETECTION = {
 
 EVENT_LOGS = []  # Will later be persisted to disk or database.
 
+# -------------------------
+# MQTT Test Integration
+# -------------------------
+MQTT_BROKER = "127.0.0.1"
+MQTT_PORT = 1883
+MQTT_USER = "edwin"
+MQTT_PASS = "password"
+MQTT_TOPIC = "sit/+/+/vision/person"
+
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    """Callback for broker connection."""
+    if reason_code == 0:
+        print(f"[MQTT] Successfully connected to broker at {MQTT_BROKER}")
+        client.subscribe(MQTT_TOPIC)
+        SYSTEM_STATUS["mqtt_connected"] = True
+        print(f"[MQTT] Subscribed to topic: {MQTT_TOPIC}")
+    else:
+        print(f"[MQTT] Connection failed with code {reason_code}")
+
+
+def on_message(client, userdata, msg):
+    """Callback for receiving and parsing the payload."""
+    try:
+        payload_str = msg.payload.decode("utf-8")
+        data = json.loads(payload_str)
+
+        camera_id = data.get("camera_id", "unknown_edge")
+        confidence = data.get("confidence", 0.0)
+        timestamp = data.get("timestamp", time.strftime("%Y%m%d_%H%M%S"))
+        b64_image = data.get("image", "")
+
+        print(f"[MQTT] Payload received from {camera_id}. Confidence: {confidence}%")
+
+        # Update API State for testing.
+        LATEST_DETECTION["source"] = camera_id
+        LATEST_DETECTION["confidence"] = confidence
+        LATEST_DETECTION["timestamp"] = timestamp
+        LATEST_DETECTION["human_detected"] = True
+
+        # Verify the base64 string is present and not a placeholder.
+        if b64_image and not b64_image.startswith("<"):
+            # Decode the base64 string to binary.
+            image_bytes = base64.b64decode(b64_image)
+
+            # Conver the binary array to an OpenCV matrix
+            np_arr = np.frombuffer(image_bytes, np.uint8)
+            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+            if img is not None:
+                # 1. Pass the in-memory matrix directly to YOLO.
+                results, annotated_frame, face_results = detector.detect_frame(img)
+
+                if annotated_frame is not None:
+                    # 2. Update the global frame for the Flask dashboard stream.
+                    global latest_frame
+                    latest_frame = annotated_frame
+
+                    # 3. Save only the annotated frame as evidence.
+                    filename = f"incident_{camera_id}_{timestamp}.jpg"
+                    filepath = os.path.join(NON_COMPLIANCE_DIR, filename)
+                    cv2.imwrite(filepath, annotated_frame)
+
+                    print(f"[MQTT] Warning: YOLO returned an empty frame.")
+
+            else:
+                print("[MQTT] Error: cv2 failed to decode the image matrix.")
+        else:
+            print(
+                "[MQTT] Warning: Payload did not contain a valid base64 image string."
+            )
+
+    except json.JSONDecodeError:
+        print("[MQTT] Error: Received malformed JSON payload.")
+    except Exception as e:
+        print(f"[MQTT] Unexpected error during message processing: {e}")
+
+
+# Initialise MQTT Thread
+mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+mqtt_client.username_pw_set(MQTT_USER, MQTT_PASS)
+mqtt_client.on_connect = on_connect
+mqtt_client.on_message = on_message
+
+print("[SYSTEM] Starting MQTT validation thread...")
+mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+mqtt_client.loop_start()
+
+
 # Initialize camera (edge simulation)
 # camera = Camera()
 cm = CameraManager()
 cm.add_camera("cam1", source="/dev/video0")  # Use local webcam as "cam1"
-
-
-# def generate_frames():
-#     """Flask generator to stream MJPEG frames."""
-#     while True:
-#         frame_bytes = camera.get_frame_bytes()
-#         if frame_bytes is None:
-#             continue
-#         yield (
-#             b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
-#         )
-
-
-# -------------------------
-# Routes
-# -------------------------
-
-
-@app.route("/", methods=["GET"])
-def index():
-    """
-    Dashboard landing page.
-    """
-    return redirect(url_for("dashboard"))
-
-
-@app.route("/dashboard", methods=["GET"])
-def dashboard():
-    """
-    Dashboard landing page.
-    """
-    return render_template("dashboard.html")
-
 
 # Global variables for latest annotated frame.
 latest_frame = None
@@ -108,6 +179,35 @@ threading.Thread(target=detection_loop, args=("cam1",), daemon=True).start()
 
 STREAM_FPS = 15  # target FPS
 
+# def generate_frames():
+#     """Flask generator to stream MJPEG frames."""
+#     while True:
+#         frame_bytes = camera.get_frame_bytes()
+#         if frame_bytes is None:
+#             continue
+#         yield (
+#             b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+#         )
+
+
+# -------------------------
+# Routes
+# -------------------------
+@app.route("/", methods=["GET"])
+def index():
+    """
+    Dashboard landing page.
+    """
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/dashboard", methods=["GET"])
+def dashboard():
+    """
+    Dashboard landing page.
+    """
+    return render_template("dashboard.html")
+
 
 @app.route("/video_feed/<camera_id>")
 def video_feed(camera_id):
@@ -132,11 +232,6 @@ def video_feed(camera_id):
             time.sleep(1 / STREAM_FPS)  # Pace streaming to ~15 FPS.
 
     return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
-
-
-# Directory to save known faces
-KNOWN_FACES_DIR = os.path.join(os.path.dirname(__file__), "known_faces")
-os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
 
 
 @app.route("/api/capture_face/<name>", methods=["POST"])
