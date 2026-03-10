@@ -4,11 +4,19 @@ import json
 import base64
 import numpy as np
 import paho.mqtt.client as mqtt
-from flask import Flask, Response, jsonify, render_template, redirect, url_for
+from flask import (
+    Flask,
+    jsonify,
+    render_template,
+    redirect,
+    url_for,
+    send_from_directory,
+)
 import time
 import cv2
 import threading
 
+from db import Database
 from entities.camera import Camera
 from entities.camera_manager import CameraManager
 from yolo_model import Detector
@@ -69,9 +77,10 @@ def on_connect(client, userdata, flags, reason_code, properties):
     """Callback for broker connection."""
     if reason_code == 0:
         print(f"[MQTT] Successfully connected to broker at {MQTT_BROKER}")
-        client.subscribe(MQTT_TOPIC)
+        # Explicitly request Qos 1 to prevent broker delivery downgrades
+        client.subscribe(MQTT_TOPIC, qos=1)
         SYSTEM_STATUS["mqtt_connected"] = True
-        print(f"[MQTT] Subscribed to topic: {MQTT_TOPIC}")
+        print(f"[MQTT] Subscribed to topic: {MQTT_TOPIC} with QoS 1")
     else:
         print(f"[MQTT] Connection failed with code {reason_code}")
 
@@ -82,7 +91,10 @@ def on_message(client, userdata, msg):
         payload_str = msg.payload.decode("utf-8")
         data = json.loads(payload_str)
 
+        # Extract all necessary metadata for the database.
         camera_id = data.get("camera_id", "unknown_edge")
+        location = data.get("location", "sit")
+        lab_id = data.get("lab_id", "unknown_lab")
         confidence = data.get("confidence", 0.0)
         timestamp = data.get("timestamp", time.strftime("%Y%m%d_%H%M%S"))
         b64_image = data.get("image", "")
@@ -111,13 +123,26 @@ def on_message(client, userdata, msg):
                 if annotated_frame is not None:
                     # 2. Update the global frame for the Flask dashboard stream.
                     global latest_frame
-                    latest_frame = annotated_frame
+                    # Acquire the lock before modifying the variable.
+                    with frame_lock:
+                        latest_frame = annotated_frame
 
                     # 3. Save only the annotated frame as evidence.
                     filename = f"incident_{camera_id}_{timestamp}.jpg"
                     filepath = os.path.join(NON_COMPLIANCE_DIR, filename)
                     cv2.imwrite(filepath, annotated_frame)
 
+                    # Insert the metadata and filename pointer into SQLite.
+                    db.insert_snapshot(
+                        camera_id=camera_id,
+                        location=location,
+                        lab_id=lab_id,
+                        timestamp=timestamp,
+                        confidence=confidence,
+                        filename=filename,
+                    )
+                    print(f"[DB] Logged incident {filename} to database.")
+                else:
                     print(f"[MQTT] Warning: YOLO returned an empty frame.")
 
             else:
@@ -149,45 +174,12 @@ mqtt_client.loop_start()
 cm = CameraManager()
 cm.add_camera("cam1", source="/dev/video0")  # Use local webcam as "cam1"
 
-# Global variables for latest annotated frame.
+# Instantiate the database wrapper for local use in this module.
+db = Database()
+
+# Initialise the thread lock globally.
+frame_lock = threading.Lock()
 latest_frame = None
-
-
-def detection_loop(camera_id):
-    """
-    Continuously fetch frames from camera, run YOLO detection, and
-    store the latest annotated frame for streaming.
-    """
-    global latest_frame
-    while True:
-        frame_bytes = cm.get_frame(camera_id)
-        if frame_bytes is None:
-            continue
-
-        # Run YOLO detection and annotate frame.
-        _, annotated_frame, face_results = detector.detect_frame(frame_bytes)
-
-        if annotated_frame is not None:
-            latest_frame = annotated_frame
-
-        if face_results:
-            print("[INFO] Face results:", face_results)
-
-
-# Start the detection thread.
-threading.Thread(target=detection_loop, args=("cam1",), daemon=True).start()
-
-STREAM_FPS = 15  # target FPS
-
-# def generate_frames():
-#     """Flask generator to stream MJPEG frames."""
-#     while True:
-#         frame_bytes = camera.get_frame_bytes()
-#         if frame_bytes is None:
-#             continue
-#         yield (
-#             b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
-#         )
 
 
 # -------------------------
@@ -207,31 +199,6 @@ def dashboard():
     Dashboard landing page.
     """
     return render_template("dashboard.html")
-
-
-@app.route("/video_feed/<camera_id>")
-def video_feed(camera_id):
-    """
-    Stream the latest YOLO-annotated frame at a stable rate.
-    """
-
-    def generate():
-        global latest_frame
-        while True:
-            if latest_frame is None:
-                continue  # Wait until first annoated frame is ready.
-
-            # Encode frame to JPEG.
-            ret, buffer = cv2.imencode(".jpg", latest_frame)
-            if not ret:
-                continue
-
-            # Stream as MJPEG
-            yield b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
-
-            time.sleep(1 / STREAM_FPS)  # Pace streaming to ~15 FPS.
-
-    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
 @app.route("/api/capture_face/<name>", methods=["POST"])
@@ -299,12 +266,15 @@ def latest_detection():
 @app.route("/api/events", methods=["GET"])
 def event_logs():
     """
-    Returns historical event logs (stub).
+    Returns historical event logs fetched directly from the SQLite database.
     """
+    # Fetch the 50 most recent events.
+    recent_events = db.get_recent_events(limit=50)
+
     return jsonify(
         {
-            "count": len(EVENT_LOGS),
-            "events": EVENT_LOGS[-50:],  # Limit output size
+            "count": len(recent_events),
+            "events": recent_events,
         }
     )
 
