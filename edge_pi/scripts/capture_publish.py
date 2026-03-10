@@ -6,9 +6,12 @@ import time
 import os
 import socket
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 import numpy as np
 import ai_edge_litert.interpreter as tflite
+from collections import deque
+import threading
+import queue
 
 # Load MobileNet
 MODEL_PATH = "ssd_mobilenet_v2_coco_quant_postprocess.tflite"
@@ -40,7 +43,11 @@ MQTT_PORT = 1883
 MQTT_USER = "edwin"
 MQTT_PASS = "password"
 
-# Connection Callbacks
+# Initialise data structures for concurrency and memory management.
+snapshot_tracker = deque(maxlen=MAX_SNAPSHOTS)
+payload_queue = queue.Queue(maxsize=10)
+
+# Network Callbacks & Workers
 def on_connect(client, userdata, flags, reason_code, properties):
     """Callback triggered when the edge connects to the hub."""
     if reason_code == 0:
@@ -51,6 +58,39 @@ def on_connect(client, userdata, flags, reason_code, properties):
 def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
     """Callback triggered on unexpected disconnections."""
     print("Warning: Unexpected disconnection from hub. Reconnecting...")
+
+def on_publish(client, userdata, mid, reason_code=None, properties=None):
+    """Verifies Qos 1 delivery."""
+    print(f"[{datetime.now()}] Message ID {mid} acknowledged by broker (QoS 1).")
+
+def mqtt_worker_thread():
+    """
+    Background thread to process heavy encoding and network transmissions.
+    Prevents the main camera thread from blocking.
+    """
+    while True:
+        try:
+            item = payload_queue.get()
+            if item is None:
+                break # Sentinel value to terminate thread.
+
+            roi, metadata = item
+
+            # Offload the heavy JPEG and Base64 encoding to this thread.
+            success, buffer = cv2.imencode(".jpg", roi, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+            if success:
+                b64_string = base64.b64encode(buffer).decode("utf-8")
+                metadata["image"] = b64_string
+
+                # Publish with QoS 1
+                mqtt_client.publish(MQTT_TOPIC, json.dumps(metadata), qos=1)
+            else:
+                print("Error: Failed to encode image in worker thread.")
+
+            payload_queue.task_done()
+        except Exception as e:
+            print(f"Worker thread error: {e}")
+
 
 # ------------------------------
 # Initialise Connection
@@ -64,6 +104,7 @@ mqtt_client.username_pw_set(MQTT_USER, MQTT_PASS)
 # Bind the callbacks to the client
 mqtt_client.on_connect = on_connect
 mqtt_client.on_disconnect = on_disconnect
+mqtt_client.on_publish = on_publish
 
 print(f"Attempting to connect to MQTT hub at {MQTT_BROKER}...")
 try:
@@ -77,11 +118,23 @@ except Exception as e:
     print(f"Critical error: Could not establish initial connection to the hub. {e}")
     exit(1)
 
+# Start the background worker thread.
+worker = threading.Thread(target=mqtt_worker_thread, daemon=True)
+worker.start()
+
 # ------------------------------
 # Initialise Environment
 # ------------------------------
 SNAPSHOT_DIR = os.path.join(os.path.dirname(__file__), '..', 'snapshot')
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+
+# Pre-populate deque with existing files to respect MAX_SNAPSHOTS on reboot.
+existing_files = sorted(
+    [os.path.join(SNAPSHOT_DIR, f) for f in os.listdir(SNAPSHOT_DIR) if f.endswith(".jpg")],
+    key=os.path.getmtime
+)
+for f in existing_files[-MAX_SNAPSHOTS:]:
+    snapshot_tracker.append(f)
 
 # Initialise the TensorFlow Lite interpreter
 interpreter = tflite.Interpreter(model_path=MODEL_PATH)
@@ -153,48 +206,36 @@ try:
 
         # 5. Handle Detections
         if person_detected:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             filename = f"{CLIENT_ID}_snapshot_{timestamp}.jpg"
             filepath = os.path.join(SNAPSHOT_DIR, filename)
 
+            # Efficient local storage management via deque.
+            if len(snapshot_tracker) == MAX_SNAPSHOTS:
+                oldest_file = snapshot_tracker.popleft()
+                try:
+                    os.remove(oldest_file)
+                except OSError as e:
+                    print(f"Warning: Could not delete {oldest_file}. {e}")
+
             # Save to disk locally
             cv2.imwrite(filepath, roi, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            print(f"Snapshot saved as {filepath}")
+            snapshot_tracker.append(filepath)
 
-            # Manage local snapshot retention
-            snapshots = sorted(
-                [f for f in os.listdir(SNAPSHOT_DIR) if f.endswith(".jpg")],
-                key=lambda x: os.path.getmtime(os.path.join(SNAPSHOT_DIR, x))
-            )
+            # Construct metadata and pass to the queue (non-blocking)
+            payload_metadata = {
+                "camera_id": CLIENT_ID,
+                "location": LOCATION,
+                "lab_id": LAB_ID,
+                "timestamp": timestamp,
+                "confidence": float(confidence_pct)
+            }
 
-            while len(snapshots) > MAX_SNAPSHOTS:
-                oldest = snapshots.pop(0)
-                os.remove(os.path.join(SNAPSHOT_DIR, oldest))
-                print(f"Deleted oldest snapshot: {oldest}")
-
-            # 6. Construct and Publish MQTT Payload.
-            # Encode image matrix directly to a JPEG buffer in memory.
-            success, buffer = cv2.imencode('.jpg', roi, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
-
-            if success:
-                # Convert the binary buffer to a base64 string.
-                b64_string = base64.b64encode(buffer).decode('utf-8')
-
-                # Construct a structured JSON payload with relevant metadata.
-                payload = {
-                        "camera_id": CLIENT_ID,
-                        "location": LOCATION,
-                        "lab_id": LAB_ID,
-                        "timestamp": timestamp,
-                        "confidence": float(confidence_pct),
-                        "image": b64_string
-                }
-
-                # Serialise the dictionary to a JSON string and publish
-                mqtt_client.publish(MQTT_TOPIC, json.dumps(payload), qos=1)
-                print(f"Published detection payload to {MQTT_TOPIC}")
+            if not payload_queue.full():
+                # Pass a copy of the ROI to prevent it being overwritten by the next frame
+                payload_queue.put((roi.copy(), payload_metadata))
             else:
-                print("Error: Failed to encode image to memory buffer.")
+                print("Warning: Network queue is full. Dropping payload to maintain framerate.")
         else:
             print(f"[{datetime.now()}] Clear. No person detected.")
 
@@ -205,6 +246,7 @@ except KeyboardInterrupt:
 
 finally:
     cap.release()
-    # Stop the background network thread and sever the connection cleanly.
+    # Safely terminate the background thread and network client.
+    payload_queue.put(None)
     mqtt_client.loop_stop()
     mqtt_client.disconnect()
