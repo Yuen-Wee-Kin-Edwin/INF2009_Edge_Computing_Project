@@ -10,6 +10,12 @@ class CameraManager:
         """Add a new camera. source can be local index or remote URL"""
         self.cameras[camera_id] = Camera(source)
 
+    def get_camera(self, camera_id: str):
+        """
+        Retrieves a specific camera instance by its ID.
+        """
+        return self.cameras.get(camera_id)
+
     def get_frame(self, camera_id):
         """Return current frame as JPEG bytes for the given camera."""
         cam = self.cameras.get(camera_id)

@@ -1,0 +1,79 @@
+<!-- File: src/templates/register.html -->
+{% extends "base.html" %}
+
+{% block title %}
+Authorise New User - Laboratory Monitoring System
+{% endblock %}
+
+{% block content %}
+<div class="container d-flex justify-content-center align-items-center py-4">
+    <div class="card shadow p-4 text-center" style="max-width: 600px; width: 100%;">
+        <h2 class="mb-3">Register Authorised Personnel</h2>
+        <p class="text-muted mb-4">Ensure the subject is directly facing the camera and well-lit.</p>
+
+        <div class="mb-4 bg-dark rounded overflow-hidden shadow-sm d-flex align-items-center justify-content-center"
+            style="min-height: 300px;">
+            <img src="{{ url_for('video_feed') }}" alt="Camera Feed Offline" class="img-fluid w-100"
+                style="object-fit: cover;">
+        </div>
+
+        <div class="mb-3 text-start">
+            <label for="personName" class="form-label fw-bold">Personnel Name</label>
+            <input type="text" id="personName" class="form-control form-control-lg" placeholder="e.g., edwin" required>
+            <div class="form-text">This exact name will be logged during detection events.</div>
+        </div>
+
+        <button class="btn btn-primary btn-lg w-100" id="captureBtn" onclick="captureFace()">
+            Capture & Authorise
+        </button>
+
+        <div id="message" class="mt-3 fw-bold" style="min-height: 24px;"></div>
+    </div>
+</div>
+
+<script>
+    function captureFace() {
+        const nameInput = document.getElementById("personName");
+        const messageEl = document.getElementById("message");
+        const btn = document.getElementById("captureBtn");
+        const name = nameInput.value.trim();
+
+        if (!name) {
+            messageEl.textContent = "Please enter a valid name.";
+            messageEl.className = "mt-3 fw-bold text-danger";
+            nameInput.focus();
+            return;
+        }
+
+        // Disable button and show processing state to prevent double-submissions.
+        btn.disabled = true;
+        btn.textContent = "Processing...";
+        messageEl.textContent = "Extracting facial embeddings...";
+        messageEl.className = "mt-3 fw-bold text-secondary";
+
+        // Execute POST request to the Flask backend.
+        fetch(`/api/capture_face/${encodeURIComponent(name)}`, {
+            method: "POST"
+        })
+            .then(response => response.json())
+            .then(data => {
+                messageEl.textContent = data.message;
+                messageEl.className = data.status === "ok" ? "mt-3 fw-bold text-success" : "mt-3 fw-bold text-danger";
+
+                if (data.status === "ok") {
+                    nameInput.value = "";
+                }
+            })
+            .catch(err => {
+                console.error("Error: ", err);
+                messageEl.textContent = "A network error occurred while communicating with the edge device.";
+                messageEl.className = "mt-3 fw-bold text-danger";
+            })
+            .finally(() => {
+                // Restore button state.
+                btn.disabled = false;
+                btn.textContent = "Capture & Authorise";
+            });
+    }
+</script>
+{% endblock %}

@@ -15,7 +15,7 @@ class Detector:
         self.model = YOLO("models/yolo26n.pt")
 
         # Initialise face recogniser
-        self.face_recogniser = FaceRecogniser("known_faces")
+        self.face_recogniser = FaceRecogniser()
 
     def get_model(self) -> YOLO:
         return self.model

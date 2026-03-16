@@ -1,46 +1,50 @@
+import json
+
 import face_recognition
 import numpy as np
 import os
 import cv2
 
+from db import Database
+
 
 class FaceRecogniser:
-    def __init__(self, known_faces_dir="known_faces"):
+    def __init__(self):
         """
-        Load known faces from disk and build embedding database.
-        Each image filename should be the person's name.
-        Example: alice.jpg, bob.png
+        Initialises the recogniser and loads all known facial encodings
+        directly from the SQLite database.
         """
         self.known_encodings = []
         self.known_names = []
+        self._load_encodings_from_db()
 
-        # Resolve absolute path relative to this file (src directory)
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        known_faces_dir = os.path.join(base_dir, known_faces_dir)
+    def _load_encodings_from_db(self):
+        """
+        Connects to the database, retrieves the serialised JSON encodings,
+        and reconstructs them into NumPy arrays for mathematical comparison.
+        """
+        db = Database()
+        try:
+            with db.connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT name, encoding FROM authorised_faces")
+                rows = cursor.fetchall()
 
-        # Create directory if it does not exist.
-        os.makedirs(known_faces_dir, exist_ok=True)
+                for row in rows:
+                    name = row["name"]
+                    # Parse the JSON string back into a standard Python list
+                    encoding_list = json.loads(row["encoding"])
+                    # Convert the list back into a NumPy array required by the face_recognition library
+                    encoding_array = np.array(encoding_list)
 
-        for file in os.listdir(known_faces_dir):
-            # Skip non-image files.
-            if not file.lower().endswith((".jpg", ".png", ".jpeg")):
-                continue
+                    self.known_names.append(name)
+                    self.known_encodings.append(encoding_array)
 
-            name = os.path.splitext(file)[0]
-            path = os.path.join(known_faces_dir, file)
-
-            image = face_recognition.load_image_file(path)
-            encodings = face_recognition.face_encodings(image)
-
-            # Skip images where no face was detected
-            if len(encodings) == 0:
-                print(f"[WARN] No face detected in {file}")
-                continue
-
-            self.known_encodings.append(encodings[0])
-            self.known_names.append(name)
-
-        print(f"[INFO] Loaded {len(self.known_names)} known faces")
+            print(
+                f"[INFO] Successfully loaded {len(self.known_names)} known face encodings from the database."
+            )
+        except Exception as e:
+            print(f"[ERROR] Critical failure loading encodings from database: {e}")
 
     def recognise(self, frame_bgr):
         """
@@ -57,7 +61,20 @@ class FaceRecogniser:
 
         results = []
 
+        # If the database is empty, all detected faces are immediately flagged as Unknown
+        if not self.known_encodings:
+            for top, right, bottom, left in face_locations:
+                results.append(
+                    {
+                        "name": "Unknown",
+                        "confidence": 0.0,
+                        "box": (left, top, right, bottom),
+                    }
+                )
+            return results
+
         for (top, right, bottom, left), encoding in zip(face_locations, face_encodings):
+            # Compare the live face encoding against all database encodings
             matches = face_recognition.compare_faces(
                 self.known_encodings, encoding, tolerance=0.5
             )
@@ -66,9 +83,11 @@ class FaceRecogniser:
             confidence = 0.0
 
             if True in matches:
+                # Find the index of the first match to retrieve the corresponding name
                 idx = matches.index(True)
                 name = self.known_names[idx]
 
+                # Calculate the mathematical distance to derive a confidence percentage
                 distances = face_recognition.face_distance(
                     self.known_encodings, encoding
                 )
@@ -83,3 +102,14 @@ class FaceRecogniser:
             )
 
         return results
+
+    def reload_database(self):
+        """
+        Clears the current arrays and reloads them from the database.
+        Call this method whenever a new user is registered to update the system
+        without requiring a full application restart.
+        """
+        print("[INFO] Reloading facial encodings from database...")
+        self.known_encodings.clear()
+        self.known_names.clear()
+        self._load_encodings_from_db()

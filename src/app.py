@@ -11,10 +11,12 @@ from flask import (
     redirect,
     url_for,
     send_from_directory,
+    Response,
 )
 import time
 import cv2
 import threading
+import face_recognition
 
 from db import Database
 from entities.camera import Camera
@@ -188,6 +190,9 @@ db = Database()
 frame_lock = threading.Lock()
 latest_frame = None
 
+registration_lock = threading.Lock()
+registration_frame = None  # For local face registration.
+
 
 # -------------------------
 # Routes
@@ -208,32 +213,134 @@ def dashboard():
     return render_template("dashboard.html")
 
 
+@app.route("/register", methods=["GET"])
+def register_page():
+    """Serves the frontend webpage for registering new authorised personnel."""
+    return render_template("register.html")
+
+
 @app.route("/api/capture_face/<name>", methods=["POST"])
 def capture_face(name):
     """
-    Capture the current frame from the camera and save it as a known face.
-    The user provides 'name' in the URL.
+    Captures the current local frame, locates the face, extracts the 128-d embedding,
+    and stores it securely in the SQLite database.
     """
-    global latest_frame
+    global registration_frame
 
-    if latest_frame is None:
-        return jsonify({"status": "error", "message": "No frame available yet."}), 400
+    # Safely acquire the current local frame using the correct lock
+    with registration_lock:
+        if registration_frame is None:
+            return (
+                jsonify(
+                    {
+                        "status": "error",
+                        "message": "No frame available from local camera.",
+                    }
+                ),
+                400,
+            )
+        current_frame = registration_frame.copy()
 
     # Optional: convert name to lowercase.
     name = name.strip().lower()
+
     if not name:
         return jsonify({"status": "error", "message": "Name cannot be empty."}), 400
 
-    # Save full frame (or crop face later)
-    filename = f"{name}.jpg"
-    path = os.path.join(KNOWN_FACES_DIR, filename)
-    cv2.imwrite(path, latest_frame)
+    # Convert BGR to RGB for the face_recognition library using the copied frame
+    rgb_frame = cv2.cvtColor(current_frame, cv2.COLOR_BGR2RGB)
 
-    return jsonify(
-        {
-            "status": "ok",
-            "message": f"Face saved as {filename}. Restart app to activate.",
-        }
+    # Locate face and extract encoding.
+    face_locations = face_recognition.face_locations(rgb_frame)
+
+    if not face_locations:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "No face detected. Please face the camera.",
+                }
+            ),
+            400,
+        )
+    if len(face_locations) > 1:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Multiple faces detected. Only one person is allowed in the frame.",
+                }
+            ),
+            400,
+        )
+
+    # Extract the mathematical embedding (returns a NumPy array)
+    face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+    encoding_array = face_encodings[0]
+
+    # Convert the NumPy array to a standard Python list for JSON serialisation.
+    encoding_list = encoding_array.tolist()
+
+    # Save to database
+    success = db.upsert_authorised_face(name, encoding_list)
+
+    if success:
+        # Trigger the dynamic reload so the edge device immediately recognises the new face
+        detector.face_recogniser.reload_database()
+        return jsonify(
+            {
+                "status": "ok",
+                "message": f"Successfully registered '{name}' into the database.",
+            }
+        )
+    else:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Database error occurred during registration.",
+                }
+            ),
+            500,
+        )
+
+
+def generate_frames():
+    """
+    Generator function that continuously yields the latest camera frame
+    from the local webcam for the registration interface.
+    """
+    global registration_frame
+
+    while True:
+        # Fetch the JPEG bytes directly from CameraManager.
+        frame_bytes = cm.get_frame("cam1")
+
+        if frame_bytes is None:
+            time.sleep(0.1)
+            continue
+
+        # Decode the JPEG bytes back into an OpenCV matrix for the registration endpoint
+        np_arr = np.frombuffer(frame_bytes, np.uint8)
+        frame_matrix = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+        # Safely update the global registration frame.
+        with registration_lock:
+            registration_frame = frame_matrix
+
+        # Yield the bytes directly in the standard MJPEG format.
+        yield (
+            b"--frame\r\n" b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n"
+        )
+
+
+@app.route("/video_feed")
+def video_feed():
+    """
+    Endpoint that serves the live video stream to the frontend HTML <img> tags.
+    """
+    return Response(
+        generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame"
     )
 
 

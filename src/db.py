@@ -1,5 +1,6 @@
 # File: src/db.py
 import sqlite3
+import json
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "lab_monitor.db"
@@ -46,6 +47,17 @@ class Database:
                         detection_timestamp TEXT NOT NULL,
                         confidence REAL NOT NULL,
                         filename TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS authorised_faces (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT UNIQUE NOT NULL,
+                        encoding TEXT NOT NULL,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                     """
@@ -102,6 +114,29 @@ class Database:
         except sqlite3.Error as e:
             print(f"[DB ERROR] Failed to fetch recent events: {e}")
             return []
+
+    def upsert_authorised_face(self, name: str, encoding_list: list) -> bool:
+        """
+        Inserts or updates an authorised user's face embedding.
+        The encoding_list must be a standard Python list, which is converted to JSON.
+        """
+        try:
+            encoding_json = json.dumps(encoding_list)
+            with self.connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO authorised_faces (name, encoding)
+                    VALUES (?, ?)
+                    ON CONFLICT(name) DO UPDATE SET encoding=excluded.encoding
+                    """,
+                    (name, encoding_json),
+                )
+                conn.commit()
+                return True
+        except sqlite3.Error as e:
+            print(f"[DB ERROR] Failed to save face embedding: {e}")
+            return False
 
     def close(self):
         """Close the SQLite database connection."""
