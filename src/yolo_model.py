@@ -47,26 +47,43 @@ class Detector:
         # Annotate frame if requested.
         annotated_frame = yolo_results[0].plot() if annotate else frame_small.copy()
 
-        # Run face recognition on the same frame.
-        face_results = self.face_recogniser.recognise(frame_small)
+        person_detected = False
+        face_results = []
 
-        # Fraw face boxes and labels.
-        for face in face_results:
-            left, top, right, bottom = face["box"]
-            name = face["name"]
-            confidence = face["confidence"]
+        # Parse YOLO results to verify if a 'person' (class 0) is in the frame.
+        for box in yolo_results[0].boxes:
+            if int(box.cls[0]) == 0:
+                person_detected = True
+                break
 
-            cv2.rectangle(annotated_frame, (left, top), (right, bottom), (0, 255, 0), 2)
+        # Only trigger facial recognition if a human is present.
+        if person_detected:
+            # Run face recognition on the same frame.
+            face_results = self.face_recogniser.recognise(frame_small)
 
-            label = f"{name} ({confidence:.2f})"
-            cv2.putText(
-                annotated_frame,
-                label,
-                (left, top - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 255, 0),
-                2,
-            )
+            # Draw custom face boxes and labels over the YOLO annotations.
+            for face in face_results:
+                left, top, right, bottom = face["box"]
+                name = face["name"]
+                confidence = face["confidence"]
+
+                # Use red for unknown instruders, green for recognised faces
+                colour = (0, 0, 255) if name == "Unknown" else (0, 255, 0)
+                cv2.rectangle(annotated_frame, (left, top), (right, bottom), colour, 2)
+
+                label = f"{name} ({confidence:.2f})"
+                cv2.putText(
+                    annotated_frame,
+                    label,
+                    (left, top - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    colour,
+                    2,
+                )
+
+        else:
+            # Return a specific flag if YOLO did not see a person, so app.py known to ignore it.
+            return yolo_results[0], annotated_frame, "NO_PERSON"
 
         return yolo_results[0], annotated_frame, face_results

@@ -101,12 +101,6 @@ def on_message(client, userdata, msg):
 
         print(f"[MQTT] Payload received from {camera_id}. Confidence: {confidence}%")
 
-        # Update API State for testing.
-        LATEST_DETECTION["source"] = camera_id
-        LATEST_DETECTION["confidence"] = confidence
-        LATEST_DETECTION["timestamp"] = timestamp
-        LATEST_DETECTION["human_detected"] = True
-
         # Verify the base64 string is present and not a placeholder.
         if b64_image and not b64_image.startswith("<"):
             # Decode the base64 string to binary.
@@ -117,8 +111,20 @@ def on_message(client, userdata, msg):
             img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
             if img is not None:
-                # 1. Pass the in-memory matrix directly to YOLO.
+                # 1. Pass matrix to the combined YOLO/Face pipeline.
+                # This returns the frame ALREADY annotated with YOLO boxes and Face Recognition names.
                 results, annotated_frame, face_results = detector.detect_frame(img)
+
+                # Guard clause: Drop the frame to save disk space if no human is present.
+                if face_results == "NO_PERSON":
+                    print("[VISION] YOLO detected no personnel. Discarding frame.")
+                    return
+
+                # Update API State for testing only after confirming a person is present.
+                LATEST_DETECTION["source"] = camera_id
+                LATEST_DETECTION["confidence"] = confidence
+                LATEST_DETECTION["timestamp"] = timestamp
+                LATEST_DETECTION["human_detected"] = True
 
                 if annotated_frame is not None:
                     # 2. Update the global frame for the Flask dashboard stream.
@@ -142,6 +148,7 @@ def on_message(client, userdata, msg):
                         filename=filename,
                     )
                     print(f"[DB] Logged incident {filename} to database.")
+
                 else:
                     print(f"[MQTT] Warning: YOLO returned an empty frame.")
 
