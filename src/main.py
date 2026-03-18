@@ -2,7 +2,7 @@
 import threading
 import time
 
-from app import run_flask
+from app import run_flask, shutdown_services
 from db import Database
 
 
@@ -22,16 +22,30 @@ def monitoring_loop():
 # Raspberry Pi 5 Model B Rev 1.1
 
 if __name__ == "__main__":
-    # Initialised db.
-    db = Database()
-    db.init_db()
-    print(f"Database initialized at {db.db_path}")
+    try:
+        # Initialised db.
+        db = Database()
+        db.init_db()
+        print(f"Database initialized at {db.db_path}")
 
-    # Run monitoring in a background thread.
-    monitoring_thread = threading.Thread(target=monitoring_loop, daemon=True)
-    monitoring_thread.start()
-    print("Monitoring thread started.")
+        # Run monitoring in a background thread.
+        monitoring_thread = threading.Thread(target=monitoring_loop, daemon=True)
+        monitoring_thread.start()
+        print("Monitoring thread started.")
 
-    # Start Flask dashboard (can also show live webcam feed + sensor data)
-    print("Starting Flask dashboard...")
-    run_flask()
+        # Start Flask dashboard (can also show live webcam feed + sensor data)
+        print("Starting Flask dashboard...")
+        run_flask()
+
+    except KeyboardInterrupt:
+        print(
+            "\n[SYSTEM] Manual interrupt (Ctrl+C) received. Shutting down gracefully..."
+        )
+
+    finally:
+        print("[SYSTEM] Executing teardown sequence...")
+
+        # Call the function from app.py to clean up its resources
+        shutdown_services()
+
+        print("[SYSTEM] Teardown complete. Exiting.")

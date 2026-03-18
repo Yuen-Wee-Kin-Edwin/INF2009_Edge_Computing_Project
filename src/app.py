@@ -17,6 +17,8 @@ import time
 import cv2
 import threading
 import face_recognition
+import hashlib
+from collections import OrderedDict
 
 from db import Database
 from entities.camera import Camera
@@ -33,6 +35,13 @@ os.makedirs(NON_COMPLIANCE_DIR, exist_ok=True)
 # Directory to save known faces
 KNOWN_FACES_DIR = os.path.join(os.path.dirname(__file__), "known_faces")
 os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
+
+# -------------------------
+# Dudeplication Configuration
+# -------------------------
+# OrderedDict provides O(1) lookup time whilst remembering insertion order.
+RECENT_MESSAGES_CACHE = OrderedDict()
+MAX_CACHE_SIZE = 100  # Number of recent messages to track.
 
 # -------------------------
 # Initialize YOLO Detector
@@ -90,6 +99,22 @@ def on_connect(client, userdata, flags, reason_code, properties):
 def on_message(client, userdata, msg):
     """Callback for receiving and parsing the payload."""
     try:
+        # 1. Deduplication Check (Execute before any heavy processing)
+        # Generate a SHA-256 hash or the raw binary payload.
+        payload_hash = hashlib.sha256(msg.payload).hexdigest()
+
+        if payload_hash in RECENT_MESSAGES_CACHE:
+            print(
+                f"[MQTT] Duplicate QoS 1 message intercepted (Hash: {payload_hash[:8]}). Discarding."
+            )
+            return
+
+        # Register the new hash and enforce the cache limit.
+        RECENT_MESSAGES_CACHE[payload_hash] = True
+        if len(RECENT_MESSAGES_CACHE) > MAX_CACHE_SIZE:
+            # Remove the oldest entry (FIFO)
+            RECENT_MESSAGES_CACHE.popitem(last=False)
+
         payload_str = msg.payload.decode("utf-8")
         data = json.loads(payload_str)
 
@@ -444,3 +469,15 @@ def run_flask():
         debug=True,
         use_reloader=False,  # Must be disabled when running in threads
     )
+
+
+def shutdown_services():
+    """
+    Safely releases all hardware and network resources initialized by app.py.
+    """
+    print("[SYSTEM] Stopping MQTT client...")
+    mqtt_client.loop_stop()
+    mqtt_client.disconnect()
+
+    print("[SYSTEM] Releasing camera hardware...")
+    cm.stop_all()
