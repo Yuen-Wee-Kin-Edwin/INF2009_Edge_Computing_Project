@@ -38,7 +38,8 @@ LAB_ID = os.environ.get("LAB_ID", "lab_default")
 MQTT_TOPIC = f"{LOCATION}/{LAB_ID}/{CLIENT_ID}/vision/person"
 
 # MQTT Settings
-MQTT_BROKER = "192.168.137.98"
+MQTT_BROKER_DNS = "edwinpi.local"
+MQTT_BROKER_FALLBACK_IP = "192.168.137.98"
 MQTT_PORT = 1883
 MQTT_USER = "edwin"
 MQTT_PASS = "password"
@@ -51,7 +52,7 @@ payload_queue = queue.Queue(maxsize=10)
 def on_connect(client, userdata, flags, reason_code, properties):
     """Callback triggered when the edge connects to the hub."""
     if reason_code == 0:
-        print(f"Edge successfully connected to the hub at {MQTT_BROKER}")
+        print(f"Edge successfully connected to the hub at {MQTT_BROKER_DNS}")
     else:
         print(f"Connection to hub failed with return code {reason_code}")
 
@@ -106,13 +107,25 @@ mqtt_client.on_connect = on_connect
 mqtt_client.on_disconnect = on_disconnect
 mqtt_client.on_publish = on_publish
 
-print(f"Attempting to connect to MQTT hub at {MQTT_BROKER}...")
+print(f"Attempting to connect to MQTT hub at {MQTT_BROKER_DNS}...")
 try:
-    mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    mqtt_client.connect(MQTT_BROKER_DNS, MQTT_PORT, 60)
+    print(f"Connected to hub via DNS: {MQTT_BROKER_DNS}")
 
     # loop_start() spawns a daemon thread.
     # It manages ping requests, network traffic, and automatic reconnections in the background
     mqtt_client.loop_start()
+
+except socket.gaierror:
+    # socket.gaierror is thrown if the hostname cannot be resolved.
+    print(f"Warning: DNS resolution for {MQTT_BROKER_DNS} failed. Falling back to static IP.")
+    try:
+        mqtt_client.connect(MQTT_BROKER_FALLBACK_IP, MQTT_PORT, 60)
+        print(f"Connected to hub via fallback IP: {MQTT_BROKER_FALLBACK_IP}")
+        mqtt_client.loop_start()
+    except Exception as e:
+        print(f"Critical error: Fallback connection failed. {e}")
+        exit(1)
 
 except Exception as e:
     print(f"Critical error: Could not establish initial connection to the hub. {e}")
