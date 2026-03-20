@@ -33,7 +33,7 @@ password -> password
 ```
 
 ## Edge Pi
-```
+```zsh
 sudo apt update
 sudo apt install python3-pip
 sudo apt install python3-opencv
@@ -52,4 +52,10 @@ pip install --no-cache-dir -r requirements-edge.txt
 
 cd edge_pi/scripts
 LAB_ID=lab01 python3 capture_publish.py
+```
+
+```zsh
+mosquitto_pub -h localhost -u edwin -P password -t "sit/lab01/edge-camera-01/command" -m '{"action":"deactivate"}'
+
+mosquitto_pub -h localhost -u edwin -P password -t "sit/lab01/edge-camera-01/command" -m '{"action":"activate"}'
 ```
