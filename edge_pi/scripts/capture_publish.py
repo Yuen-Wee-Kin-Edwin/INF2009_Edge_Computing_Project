@@ -37,6 +37,12 @@ LAB_ID = os.environ.get("LAB_ID", "lab_default")
 # Example output: sit/lab_default/edge-camera-01/vision/person
 MQTT_TOPIC = f"{LOCATION}/{LAB_ID}/{CLIENT_ID}/vision/person"
 
+# The topic the edge device will listen to for commands
+COMMAND_TOPIC = f"{LOCATION}/{LAB_ID}/{CLIENT_ID}/command"
+
+# Global state flag to control the capture loop
+camera_active = True
+
 # MQTT Settings
 MQTT_BROKER_DNS = "edwinpi.local"
 MQTT_BROKER_FALLBACK_IP = "192.168.137.98"
@@ -53,6 +59,9 @@ def on_connect(client, userdata, flags, reason_code, properties):
     """Callback triggered when the edge connects to the hub."""
     if reason_code == 0:
         print(f"Edge successfully connected to the hub at {MQTT_BROKER_DNS}")
+        # Subscribe to the command topic immediately upon connection
+        client.subscribe(COMMAND_TOPIC, qos=1)
+        print(f"Subscribed to command topic: {COMMAND_TOPIC}")
     else:
         print(f"Connection to hub failed with return code {reason_code}")
 
@@ -63,6 +72,29 @@ def on_disconnect(client, userdata, disconnect_flags, reason_code, properties):
 def on_publish(client, userdata, mid, reason_code=None, properties=None):
     """Verifies Qos 1 delivery."""
     print(f"[{datetime.now()}] Message ID {mid} acknowledged by broker (QoS 1).")
+
+def on_message(client, userdata, msg):
+    """Callback triggered when a command is received from the Pi 5."""
+    global camera_active
+    try:
+        payload = json.loads(msg.payload.decode('utf-8'))
+        action = payload.get("action")
+
+        if action == "activate":
+            if not camera_active:
+                camera_active = True
+                print(f"[{datetime.now()}] Camera activated via remote command.")
+        elif action == "deactivate":
+            if camera_active:
+                camera_active = False
+                print(f"[{datetime.now()}] Camera deactivated via remote command. Entering standby.")
+        else:
+            print(f"Warning: Unrecognised command received: {action}")
+    
+    except json.JSONDecodeError:
+        print("Error: Received malformed JSON command.")
+    except Exception as e:
+        print(f"Error processing command: {e}")
 
 def mqtt_worker_thread():
     """
@@ -106,6 +138,7 @@ mqtt_client.username_pw_set(MQTT_USER, MQTT_PASS)
 mqtt_client.on_connect = on_connect
 mqtt_client.on_disconnect = on_disconnect
 mqtt_client.on_publish = on_publish
+mqtt_client.on_message = on_message
 
 print(f"Attempting to connect to MQTT hub at {MQTT_BROKER_DNS}...")
 try:
@@ -174,6 +207,11 @@ print("Starting continuous object detection. Press Ctrl+C to stop.")
 # ------------------------------
 try:
     while True:
+        # Check the state flag before doing any heavy lifting
+        if not camera_active:
+            time.sleep(1) # Idle in standby mode to save CPU cycles
+            continue
+
         ret, frame = cap.read()
         if not ret:
             print("Error: Failed to capture frame.")
