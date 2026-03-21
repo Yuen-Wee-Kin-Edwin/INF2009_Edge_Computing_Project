@@ -22,7 +22,7 @@ sudo ./scripts/run_app.sh
 ```
 5. OPTIONAL: Run sqlite-web
 ```zsh
-sqlite_web src/lab_monitor.db --host 0.0.0.0 --port 8080
+sudo .venv/bin/sqlite_web src/lab_monitor.db --host 0.0.0.0 --port 8080
 ```
 
 ## MQTT Hub Setup.
