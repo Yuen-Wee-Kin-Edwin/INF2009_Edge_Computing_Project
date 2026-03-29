@@ -99,6 +99,9 @@ def on_connect(client, userdata, flags, reason_code, properties):
 def on_message(client, userdata, msg):
     """Callback for receiving and parsing the payload."""
     try:
+        # Start master timer the millisecond the packet is intercepted
+        t_start = time.perf_counter()
+
         # 1. Deduplication Check (Execute before any heavy processing)
         # Generate a SHA-256 hash or the raw binary payload.
         payload_hash = hashlib.sha256(msg.payload).hexdigest()
@@ -137,14 +140,25 @@ def on_message(client, userdata, msg):
             np_arr = np.frombuffer(image_bytes, np.uint8)
             img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
+            # --- Phase 1: Ingestion & Decoding Timer ---
+            t_decode = time.perf_counter()
+
             if img is not None:
                 # 1. Pass matrix to the combined YOLO/Face pipeline.
                 # This returns the frame ALREADY annotated with YOLO boxes and Face Recognition names.
                 results, annotated_frame, face_results = detector.detect_frame(img)
 
+                # --- Phase 2: AI Validation Timer ---
+                t_ai = time.perf_counter()
+
                 # Guard clause: Drop the frame to save disk space if no human is present.
                 if face_results == "NO_PERSON":
                     print("[VISION] YOLO detected no personnel. Discarding frame.")
+                    # Print partial profiling before returning
+                    print(f"--- Node 3 Profiling (Rejected) ---")
+                    print(f"Ingestion & Decode: {(t_decode - t_start) * 1000:.1f} ms")
+                    print(f"YOLO Validation: {(t_ai - t_decode) * 1000:.1f} ms")
+                    print(f"-------------------------------------\n")
                     return
 
                 # Update API State for testing only after confirming a person is present.
@@ -174,7 +188,19 @@ def on_message(client, userdata, msg):
                         confidence=confidence,
                         filename=filename,
                     )
+
+                    # --- Phase 3: I/O & Database Timer ---
+                    t_db = time.perf_counter()
+
                     print(f"[DB] Logged incident {filename} to database.")
+
+                    # Print full profiling for a validated intrusion
+                    print(f"--- Node 3 Profiling (Validated) ---")
+                    print(f"Ingestion & Decode: {(t_decode - t_start) * 1000:.1f} ms")
+                    print(f"YOLO + Face AI: {(t_ai - t_decode) * 1000:.1f} ms")
+                    print(f"File & DB I/O: {(t_db - t_ai) * 1000:.1f} ms")
+                    print(f"Total Processing: {(t_db - t_start) * 1000:.1f} ms")
+                    print(f"--------------------------------------------------\n")
 
                 else:
                     print(f"[MQTT] Warning: YOLO returned an empty frame.")
