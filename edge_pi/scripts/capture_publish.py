@@ -12,6 +12,7 @@ import ai_edge_litert.interpreter as tflite
 from collections import deque
 import threading
 import queue
+import subprocess
 
 # Load MobileNet
 MODEL_PATH = "ssd_mobilenet_v2_coco_quant_postprocess.tflite"
@@ -140,6 +141,22 @@ mqtt_client.on_disconnect = on_disconnect
 mqtt_client.on_publish = on_publish
 mqtt_client.on_message = on_message
 
+def get_cpu_temp():
+    """
+    Queries the Raspberry Pi hardware for the current CPU core temperature.
+    Returns a float representing the temperature in Celsius.
+    """
+    try:
+        # Executes the native Broadcom VideoCore command
+        result = subprocess.run(['vcgencmd', 'measure_temp'], capture_output=True, text=True)
+        # Parses the output string (e.g., "temp=55.0'C") to extract the float.
+        temp_str = result.stdout.replace("temp=", "").replace("'C\n", "")
+        return float(temp_str)
+    except Exception as e:
+        print(f"Hardware querying error: {e}")
+        return 0.0
+
+
 print(f"Attempting to connect to MQTT hub at {MQTT_BROKER_DNS}...")
 try:
     mqtt_client.connect(MQTT_BROKER_DNS, MQTT_PORT, 60)
@@ -203,7 +220,7 @@ cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 print("Starting continuous object detection. Press Ctrl+C to stop.")
 
 # ------------------------------
-# Execution Loop
+# Execution Loop with PASO Profiling
 # ------------------------------
 try:
     while True:
@@ -212,11 +229,17 @@ try:
             time.sleep(1) # Idle in standby mode to save CPU cycles
             continue
 
+        # Start master timer
+        t_start = time.perf_counter()
+
+        # --- Phase 1: Camera I/O Profiling ---
         ret, frame = cap.read()
         if not ret:
             print("Error: Failed to capture frame.")
             continue
+        t_capture = time.perf_counter()
 
+        # --- Phase 2: Pre-processing Profiling ---
         # 1. Crop Region of Interest.
         y1, y2, x1, x2 = ROI_COORDS
         roi = frame[y1:y2, x1:x2]
@@ -230,11 +253,15 @@ try:
         # The downloaded quantized model expects uint8, so this is bypassed.
         if input_details[0]['dtype'] == np.float32:
             input_data = (np.float32(input_data) - 127.5) / 127.5
+        t_preprocess = time.perf_counter()
 
+        # --- Phase 3: AI Inference Profiling ---
         # 3. Execute Inference
         interpreter.set_tensor(input_details[0]['index'], input_data)
         interpreter.invoke()
+        t_inference = time.perf_counter()
 
+        # --- Phase 4: Post-processing Profiling ---
         # 4. Parse the Multiple Output Tensors
         # Output 0: Bounding box coordinates [ymin, xmin, ymax, xmax]
         # Output 1: Class indices
@@ -287,8 +314,28 @@ try:
                 payload_queue.put((roi.copy(), payload_metadata))
             else:
                 print("Warning: Network queue is full. Dropping payload to maintain framerate.")
+
         else:
             print(f"[{datetime.now()}] Clear. No person detected.")
+        
+        # --- Output PASO Profiling Metrics ---
+        # Convert seconds to milliseconds for granular analysis
+        t_postprocess = time.perf_counter()
+        time_capture = (t_capture - t_start) * 1000
+        time_prep = (t_preprocess - t_capture) * 1000
+        time_inf = (t_inference - t_preprocess) * 1000
+        time_post = (t_postprocess - t_inference) * 1000
+        time_total = (t_postprocess - t_start) * 1000
+        current_temp = get_cpu_temp()
+
+        print(f"\n--- Profiling Report ---")
+        print(f"Camera I/O: {time_capture:.1f} ms")
+        print(f"Pre-processing: {time_prep:.1f} ms")
+        print(f"AI Inference: {time_inf:.1f} ms")
+        print(f"Post-processing: {time_post:.1f} ms")
+        print(f"Total Loop: {time_total:.1f} ms")
+        print(f"Core Temp: {current_temp} Celsius")
+        print(f"--------------------------\n")
 
         time.sleep(CAPTURE_INTERVAL)
 
